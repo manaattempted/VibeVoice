@@ -221,7 +221,7 @@ class VibeVoiceForConditionalGenerationInference(VibeVoicePreTrainedModel, Gener
         if speech_tensors is not None and speech_masks is not None:
             acoustic_features, speech_embeds = self._process_speech_inputs(speech_tensors.to(self.dtype), speech_masks)
             if speech_input_mask is not None:
-                inputs_embeds[speech_input_mask] = speech_embeds
+                inputs_embeds[speech_input_mask] = speech_embeds.to(inputs_embeds.device)
 
         outputs = self.model(
             inputs_embeds=inputs_embeds,
@@ -671,7 +671,7 @@ class VibeVoiceForConditionalGenerationInference(VibeVoicePreTrainedModel, Gener
                 diffusion_embeds = acoustic_embed + semantic_embed
 
                 # Update embeddings for diffusion indices
-                next_inputs_embeds[diffusion_indices] = diffusion_embeds
+                next_inputs_embeds[diffusion_indices] = diffusion_embeds.to(next_inputs_embeds.device)
             
             # Set inputs_embeds for next iteration
             inputs_embeds = next_inputs_embeds

@@ -222,6 +222,12 @@ def parse_args():
         default="auto",
         help="Model dtype. auto = float16 on mps, bfloat16 on cuda, float32 on cpu",
     )
+    parser.add_argument(
+        "--output_name",
+        type=str,
+        default=None,
+        help="Custom name for the output audio file (without extension)",
+    )
     return parser.parse_args()
 
 def main():
@@ -346,14 +352,33 @@ def main():
             )
             model.to("mps")
         elif args.device == "cuda":
-            # MULTI-GPU: ใช้ device_map="auto" เพื่อกระจายโมเดลไปทุก GPU
-            # (แทน "cuda" ที่ใส่ทุกอย่างลง GPU ใบเดียว)
+            # MULTI-GPU: Use device_map="auto" to distribute model across GPUs
+            # We first load the model on CPU/meta-device to avoid immediate memory issues,
+            # but from_pretrained with device_map="auto" handles this.
+            # To fix "ValueError: model.speech_bias_factor doesn't have any device set",
+            # we can use a monkey-patch to ensure these buffers are handled correctly.
+
+            import torch.nn as nn
+            original_register_buffer = nn.Module.register_buffer
+            def patched_register_buffer(self, name, tensor, persistent=True):
+                if name in ['speech_scaling_factor', 'speech_bias_factor']:
+                    # Instead of a buffer, we use a Parameter with requires_grad=False
+                    # This ensures that accelerate's device_map can assign it a device.
+                    setattr(self, name, nn.Parameter(tensor, requires_grad=False))
+                    return
+                return original_register_buffer(self, name, tensor, persistent)
+
+            nn.Module.register_buffer = patched_register_buffer
+
             model = VibeVoiceForConditionalGenerationInference.from_pretrained(
                 args.model_path,
                 torch_dtype=load_dtype,
                 device_map="auto",
                 attn_implementation=attn_impl_primary,
             )
+
+            # Restore the original register_buffer
+            nn.Module.register_buffer = original_register_buffer
         else:  # cpu
             model = VibeVoiceForConditionalGenerationInference.from_pretrained(
                 args.model_path,
@@ -467,7 +492,10 @@ def main():
     print(f"Total tokens: {output_tokens}")
 
     # Save output (processor handles device internally)
-    txt_filename = os.path.splitext(os.path.basename(args.txt_path))[0]
+    if args.output_name:
+        txt_filename = args.output_name
+    else:
+        txt_filename = os.path.splitext(os.path.basename(args.txt_path))[0]
     output_path = os.path.join(args.output_dir, f"{txt_filename}_generated.wav")
     os.makedirs(args.output_dir, exist_ok=True)
 
